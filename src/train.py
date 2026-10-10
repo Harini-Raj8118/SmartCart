@@ -1,7 +1,14 @@
-"""Train + evaluate Logistic Regression (baseline), Random Forest and XGBoost on REAL REES46 sessions.
+"""Train SmartCart models on real REES46 data or generated demo sessions.
 
-  python -m src.train --data-dir data/raw --sample-frac 0.02          # builds features, then trains
-  python -m src.train --features data/processed/session_features.csv  # reuse a preprocessed table
+Real data:
+  python -m src.train --data-dir data/raw --sample-frac 0.02
+  python -m src.train --features data/processed/session_features.csv
+
+Demo only (does not require the large REES46 download):
+  python -m src.train --demo
+  python -m src.train --demo --demo-rows 1500
+
+Demo metrics are for pipeline smoke-testing only. They are NOT research results.
 """
 import argparse, json, os, time
 import joblib
@@ -32,17 +39,124 @@ OUT = "outputs"
 METRICS = ["accuracy", "balanced_accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc"]
 
 
+def make_demo_sessions(n_rows=1000, seed=42):
+    """Create session-level synthetic rows matching src.features; demo use only."""
+    if n_rows < 200:
+        raise ValueError("Use at least 200 demo rows so the train/test split and CV can run.")
+
+    rng = np.random.default_rng(seed)
+    y = np.tile([0, 1], int(np.ceil(n_rows / 2)))[:n_rows]
+    rng.shuffle(y)
+    abandoned = y == 1
+
+    n_cart_adds = rng.integers(1, 5, size=n_rows)
+    n_cart_removes = np.where(
+        abandoned,
+        rng.integers(1, 4, size=n_rows),
+        rng.integers(0, 2, size=n_rows),
+    )
+    n_views = rng.poisson(np.where(abandoned, 5.0, 3.5))
+    n_events = n_views + n_cart_adds + n_cart_removes
+    n_unique_products = np.maximum(1, np.minimum(n_events, rng.poisson(2.5, n_rows) + 1))
+    n_unique_categories = np.maximum(1, np.minimum(n_unique_products, rng.integers(1, 4, n_rows)))
+    avg_price = rng.lognormal(mean=3.2, sigma=0.7, size=n_rows).clip(2, 500)
+    max_price = avg_price * rng.uniform(1.0, 2.5, size=n_rows)
+    cart_value = n_cart_adds * avg_price * rng.uniform(0.7, 1.3, size=n_rows)
+    session_duration = rng.gamma(shape=2.0, scale=np.where(abandoned, 100.0, 75.0))
+    time_to_cart = rng.uniform(0, 180, size=n_rows)
+    day_of_week = rng.integers(0, 7, size=n_rows)
+    start_hour = rng.integers(0, 24, size=n_rows)
+    n_prev_sessions = rng.poisson(2.0, size=n_rows)
+    n_prev_purchases = np.minimum(n_prev_sessions, rng.poisson(0.8, size=n_rows))
+
+    # Synthetic patterns are intentionally varied to exercise preprocessing and model code.
+    X = pd.DataFrame({
+        "session_key": np.arange(1, n_rows + 1),
+        "user_id": np.arange(100_001, 100_001 + n_rows),
+        "session_start": pd.date_range("2025-01-01", periods=n_rows, freq="h", tz="UTC"),
+        "n_events": n_events,
+        "n_views": n_views,
+        "n_cart_adds": n_cart_adds,
+        "n_cart_removes": n_cart_removes,
+        "net_cart_additions": n_cart_adds - n_cart_removes,
+        "n_unique_products": n_unique_products,
+        "n_unique_categories": n_unique_categories,
+        "avg_price": avg_price,
+        "max_price": max_price,
+        "cart_value": cart_value,
+        "removal_ratio": n_cart_removes / n_cart_adds,
+        "views_to_cart_ratio": n_views / n_cart_adds,
+        "cart_to_view_ratio": n_cart_adds / (n_views + 1),
+        "session_duration_sec": session_duration,
+        "time_to_first_cart_sec": time_to_cart,
+        "avg_time_between_actions_sec": session_duration / np.maximum(n_events - 1, 1),
+        "events_per_minute": n_events / (session_duration / 60 + 1),
+        "start_hour": start_hour,
+        "day_of_week": day_of_week,
+        "is_weekend": (day_of_week >= 5).astype(int),
+        "n_prev_sessions": n_prev_sessions,
+        "n_prev_purchases": n_prev_purchases,
+        "is_returning_user": (n_prev_sessions > 0).astype(int),
+        "main_category": rng.choice(
+            ["electronics", "computers", "apparel", "home", "sport", "unknown"],
+            size=n_rows,
+        ),
+        TARGET: y.astype(int),
+    })
+
+    return X
+
+
 def load_sessions(a):
+    # Demo mode is isolated from the real-data path and never labels itself as REES46.
+    if getattr(a, "demo", False):
+        if a.features:
+            raise ValueError("Use either --demo or --features, not both.")
+        X = make_demo_sessions(a.demo_rows, a.seed)
+        meta = {
+            "dataset": "Synthetic SmartCart demo sessions (generated; not REES46)",
+            "synthetic": True,
+            "files": ["generated_in_memory"],
+            "sample_frac": 1.0,
+            "window_minutes": a.window_minutes,
+            "events_scanned": 0,
+            "sessions_total": int(len(X)),
+            "cart_sessions": int(len(X)),
+            "model_sessions": int(len(X)),
+            "abandoned": int(X[TARGET].sum()),
+            "completed": int((1 - X[TARGET]).sum()),
+            "abandonment_rate": float(X[TARGET].mean()),
+            "session_start_min": str(X["session_start"].min()),
+            "session_start_max": str(X["session_start"].max()),
+        }
+        return X, meta
+
     if a.features:
         if not os.path.exists(a.features) or not os.path.exists(a.features + ".meta.json"):
-            raise FileNotFoundError("Preprocessed table or its .meta.json is missing. Re-run src.preprocess "
-                                    "on the real REES46 files (this check blocks unknown/synthetic tables).")
+            raise FileNotFoundError(
+                "Preprocessed table or its .meta.json is missing. Re-run src.preprocess "
+                "on the real REES46 files (unknown/synthetic tables are blocked)."
+            )
         X = pd.read_csv(a.features, parse_dates=["session_start"])
-        meta = json.load(open(a.features + ".meta.json"))
+        with open(a.features + ".meta.json", encoding="utf-8") as f:
+            meta = json.load(f)
     else:
-        X, meta = preprocess(a.data_dir, a.files, a.sample_frac, a.window_minutes, a.chunksize, DEFAULT_OUT)
+        X, meta = preprocess(
+            a.data_dir, a.files, a.sample_frac, a.window_minutes,
+            a.chunksize, DEFAULT_OUT
+        )
+
     if meta.get("synthetic", True) or "REES46" not in meta.get("dataset", ""):
         raise ValueError("Refusing to train: data is not marked as real REES46 data.")
+
+    required = ["session_start", "user_id", TARGET, *NUMERIC, *CATEGORICAL]
+    missing = sorted(set(required) - set(X.columns))
+    if missing:
+        raise ValueError(f"Feature dataset is missing required columns: {missing}")
+    if X.empty:
+        raise ValueError("Feature dataset is empty.")
+    if X[TARGET].nunique() != 2:
+        raise ValueError("Training requires both abandoned and completed sessions.")
     return X, meta
 
 
@@ -86,11 +200,16 @@ def md_table(df):
 
 
 def main(a):
+    global OUT
+    demo_mode = getattr(a, "demo", False)
+    if demo_mode:
+        OUT = "outputs/demo"
     t0 = time.time()
     os.makedirs(f"{OUT}/powerbi", exist_ok=True)
     sessions, meta = load_sessions(a)
     n, n_ab = len(sessions), int(sessions[TARGET].sum())
-    print(f"\nREAL sessions: {n:,} | abandoned: {n_ab:,} | completed: {n-n_ab:,} | "
+    data_label = "SYNTHETIC DEMO" if demo_mode else "REAL REES46"
+    print(f"\n{data_label} sessions: {n:,} | abandoned: {n_ab:,} | completed: {n-n_ab:,} | "
           f"abandonment rate: {n_ab/n:.2%}")
 
     # ---- time-aware split ----
@@ -106,19 +225,35 @@ def main(a):
 
     # ---- class imbalance: REAL distribution kept; models re-weighted, never resampled ----
     spw = float((ytr == 0).sum() / max((ytr == 1).sum(), 1))   # XGBoost: negatives / positives
-    models = {
-        "Logistic Regression": (LogisticRegression(max_iter=3000, class_weight="balanced"),
-                                {"clf__C": [0.01, 0.1, 1, 10]}),
-        "Random Forest": (RandomForestClassifier(class_weight="balanced_subsample", n_jobs=-1,
-                                                 random_state=a.seed),
-                          {"clf__n_estimators": [200, 400], "clf__max_depth": [6, 10, 16, None],
-                           "clf__min_samples_leaf": [1, 5, 10, 20]}),
-        "XGBoost": (XGBClassifier(eval_metric="logloss", tree_method="hist", n_jobs=-1,
-                                  random_state=a.seed, scale_pos_weight=spw),
-                    {"clf__n_estimators": [200, 400], "clf__max_depth": [3, 5, 7],
-                     "clf__learning_rate": [0.03, 0.05, 0.1], "clf__subsample": [0.7, 0.9, 1.0],
-                     "clf__colsample_bytree": [0.7, 0.9, 1.0]}),
-    }
+    if demo_mode:
+        # Small search spaces make a local smoke-test quicker.
+        models = {
+            "Logistic Regression": (LogisticRegression(max_iter=3000, class_weight="balanced"),
+                                    {"clf__C": [0.1, 1.0]}),
+            "Random Forest": (RandomForestClassifier(class_weight="balanced_subsample", n_jobs=-1,
+                                                     random_state=a.seed),
+                              {"clf__n_estimators": [50], "clf__max_depth": [6, None],
+                               "clf__min_samples_leaf": [1, 5]}),
+            "XGBoost": (XGBClassifier(eval_metric="logloss", tree_method="hist", n_jobs=-1,
+                                      random_state=a.seed, scale_pos_weight=spw),
+                        {"clf__n_estimators": [50], "clf__max_depth": [3, 5],
+                         "clf__learning_rate": [0.05, 0.1], "clf__subsample": [0.8],
+                         "clf__colsample_bytree": [0.8]}),
+        }
+    else:
+        models = {
+            "Logistic Regression": (LogisticRegression(max_iter=3000, class_weight="balanced"),
+                                    {"clf__C": [0.01, 0.1, 1, 10]}),
+            "Random Forest": (RandomForestClassifier(class_weight="balanced_subsample", n_jobs=-1,
+                                                     random_state=a.seed),
+                              {"clf__n_estimators": [200, 400], "clf__max_depth": [6, 10, 16, None],
+                               "clf__min_samples_leaf": [1, 5, 10, 20]}),
+            "XGBoost": (XGBClassifier(eval_metric="logloss", tree_method="hist", n_jobs=-1,
+                                      random_state=a.seed, scale_pos_weight=spw),
+                        {"clf__n_estimators": [200, 400], "clf__max_depth": [3, 5, 7],
+                         "clf__learning_rate": [0.03, 0.05, 0.1], "clf__subsample": [0.7, 0.9, 1.0],
+                         "clf__colsample_bytree": [0.7, 0.9, 1.0]}),
+        }
     # tuning subsample (keeps RF/XGB search affordable); final fit uses ALL training sessions
     rng = np.random.default_rng(a.seed)
     idx = np.arange(len(Xtr))
@@ -129,7 +264,8 @@ def main(a):
     rows, fitted, probas = [], {}, {}
     for name, (clf, grid) in models.items():
         pipe = Pipeline([("prep", preprocessor(num, cat)), ("clf", clf)])
-        n_iter = int(min(a.n_iter, np.prod([len(v) for v in grid.values()])))
+        requested_iter = min(a.n_iter, 2) if demo_mode else a.n_iter
+        n_iter = int(min(requested_iter, np.prod([len(v) for v in grid.values()])))
         search = RandomizedSearchCV(pipe, grid, n_iter=n_iter, scoring="roc_auc", cv=cv,
                                     random_state=a.seed, n_jobs=-1)
         search.fit(Xtr.iloc[idx], ytr[idx], groups=gtr[idx])
@@ -216,7 +352,8 @@ def main(a):
     out_te.sample(min(len(out_te), 100_000), random_state=a.seed).to_csv(
         f"{OUT}/powerbi/session_predictions.csv", index=False)
 
-    md = f"""# SmartCart results (auto-generated from this run - REAL REES46 data)
+    report_source = "SYNTHETIC DEMO DATA - NOT FOR RESEARCH REPORTING" if demo_mode else "REAL REES46 data"
+    md = f"""# SmartCart results (auto-generated from this run - {report_source})
 
 * Files: {', '.join(meta['files'])}
 * User sampling fraction (of REAL users): {meta['sample_frac']}
@@ -241,7 +378,7 @@ def main(a):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Train SmartCart models on REAL REES46 data")
+    ap = argparse.ArgumentParser(description="Train SmartCart models on real REES46 data or synthetic demo sessions")
     ap.add_argument("--data-dir", default="data/raw", help="folder with the Kaggle REES46 CSV files")
     ap.add_argument("--files", nargs="*", help="specific CSVs, e.g. 2019-Oct.csv 2019-Nov.csv")
     ap.add_argument("--sample-frac", type=float, default=1.0,
@@ -255,4 +392,8 @@ if __name__ == "__main__":
     ap.add_argument("--tune-rows", type=int, default=200_000, help="train rows used for tuning")
     ap.add_argument("--perm-rows", type=int, default=30_000)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--demo", action="store_true",
+                    help="run a synthetic pipeline smoke-test without downloading REES46")
+    ap.add_argument("--demo-rows", type=int, default=1000,
+                    help="number of synthetic sessions for --demo (minimum 200)")
     main(ap.parse_args())
