@@ -1,0 +1,14 @@
+# Real Kaggle data (huge) - never commit
+data/raw/*.csv
+data/raw/*.csv.gz
+data/raw/*.zip
+data/processed/*
+!data/processed/.gitkeep
+# Generated artefacts
+outputs/*
+!outputs/.gitkeep
+__pycache__/
+*.pyc
+venv/
+.venv/
+.vscode/
