@@ -1,0 +1,17 @@
+﻿event_time,event_type,product_id,category_id,category_code,brand,price,user_id,user_session
+2019-10-01 10:00:00 UTC,view,101,10,electronics.smartphone,demo_brand,100,1001,demo_A
+2019-10-01 10:01:00 UTC,cart,101,10,electronics.smartphone,demo_brand,100,1001,demo_A
+2019-10-01 10:03:00 UTC,view,102,10,electronics.smartphone,demo_brand,150,1001,demo_A
+2019-10-01 10:12:00 UTC,purchase,101,10,electronics.smartphone,demo_brand,100,1001,demo_A
+2019-10-01 11:00:00 UTC,view,201,20,computers.notebook,demo_brand,700,1002,demo_B
+2019-10-01 11:01:00 UTC,cart,201,20,computers.notebook,demo_brand,700,1002,demo_B
+2019-10-01 11:03:00 UTC,remove_from_cart,201,20,computers.notebook,demo_brand,700,1002,demo_B
+2019-10-01 12:00:00 UTC,view,301,30,apparel.shirt,demo_brand,35,1003,demo_C
+2019-10-01 12:01:00 UTC,cart,301,30,apparel.shirt,demo_brand,35,1003,demo_C
+2019-10-01 12:03:00 UTC,purchase,301,30,apparel.shirt,demo_brand,35,1003,demo_C
+2019-10-01 13:00:00 UTC,view,401,40,home.kitchen,demo_brand,25,1004,demo_D
+2019-10-01 13:01:00 UTC,view,402,40,home.kitchen,demo_brand,45,1004,demo_D
+2019-10-01 14:00:00 UTC,view,501,50,sport.shoes,demo_brand,80,1005,demo_E
+2019-10-01 14:01:00 UTC,cart,501,50,sport.shoes,demo_brand,80,1005,demo_E
+2019-10-01 14:06:00 UTC,view,502,50,sport.shoes,demo_brand,999,1005,demo_E
+2019-10-01 14:20:00 UTC,cart,503,50,sport.shoes,demo_brand,500,1005,demo_E
