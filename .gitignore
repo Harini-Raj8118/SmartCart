@@ -1,19 +1,50 @@
 
-# Real REES46 dataset - never upload to GitHub
+# ==========================================
+# SmartCart - Dataset files
+# ==========================================
+
+# Ignore all raw datasets
 data/raw/*
 !data/raw/.gitkeep
 
-# Processed datasets
+# Ignore processed datasets and generated metadata
 data/processed/*
 !data/processed/.gitkeep
 
-# Generated models, reports and plots
+# Ignore demo datasets by default
+data/demo/*
+!data/demo/.gitkeep
+
+# ==========================================
+# Generated outputs and trained models
+# ==========================================
+
 outputs/*
 !outputs/.gitkeep
 
+# Common model artifacts
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# ==========================================
 # Python environments and cache
+# ==========================================
+
 venv/
 .venv/
+env/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# ==========================================
+# IDE and operating system files
+# ==========================================
+
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
