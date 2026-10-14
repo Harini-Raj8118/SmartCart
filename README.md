@@ -206,20 +206,6 @@ margin). Returning users with purchase history can get personalised messages. Me
 ## 16. Research References
 1. Rausch, T. M., Derra, N. D., & Wolf, L. (2022). Predicting online shopping cart abandonment with machine
    learning approaches. *International Journal of Market Research, 64*(1). https://doi.org/10.1177/1470785320972526
-2. Kukar-Kinney, M., Scheinbaum, A. C., Orimoloye, L. O., et al. (2022). A model of online shopping cart
-   abandonment: evidence from e-tail clickstream data. *Journal of the Academy of Marketing Science, 50*, 961–980.
-   https://doi.org/10.1007/s11747-022-00857-8
-3. Prediction of cart abandonment using imbalanced clickstream data in online shopping. *Electronic Commerce
-   Research*, Springer. https://doi.org/10.1007/s10660-025-10021-3
-4. Categorizing Online Shopping Behavior from Cosmetics to Electronics: An Analytical Framework.
-   arXiv:2010.02503. https://arxiv.org/abs/2010.02503
-5. Kechinov, M. REES46 eCommerce behavior data from multi category store (Kaggle).
-   https://www.kaggle.com/datasets/mkechinov/ecommerce-behavior-data-from-multi-category-store
-6. Chen, T., & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. *KDD '16*.
-   https://doi.org/10.1145/2939672.2939785
-7. Breiman, L. (2001). Random Forests. *Machine Learning, 45*, 5–32. https://doi.org/10.1023/A:1010933404324
-
-Please check the details of each reference yourself before citing it in your report.
 
 ## 17. Limitations
 - **Size/compute**: the full dataset needs lots of RAM and time; most experiments use a user sample, and results
